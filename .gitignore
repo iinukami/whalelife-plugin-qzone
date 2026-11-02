@@ -1,0 +1,24 @@
+# Local dependencies and release output
+node_modules/
+dist/
+vendor/
+runtime/
+.artifacts/
+# Private configuration, credentials and runtime state
+data/
+config/
+memory/
+logs/
+backups/
+.env
+.env.*
+*.log
+*.pem
+*.key
+*.p12
+*.pfx
+*.db
+*.sqlite*
+*.session
+.DS_Store
+Thumbs.db

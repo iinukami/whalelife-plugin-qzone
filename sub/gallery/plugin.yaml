@@ -1,0 +1,6 @@
+id: gallery
+name: QQ 空间图库接入
+version: 0.2.1
+description: 通过图库公开服务提供说说配图及选中图片收藏，停用后仍可发表纯文字说说。
+apiVersion: "1.0.0"
+depends: [qq/qzone, gallery]

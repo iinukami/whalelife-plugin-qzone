@@ -1,0 +1,8 @@
+id: qzone
+name: QQ 空间
+version: 0.4.0
+description: 临时浏览与识图、选中图片收藏、公开发表说说和白名单互动；保存真实动作回执。
+apiVersion: "1.0.0"
+depends: [qq, sessions, memory, tools, web]
+optionalDepends: [gallery]
+sub: []
