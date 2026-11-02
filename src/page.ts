@@ -1,3 +1,7 @@
+/*! Copyright (c) 2026 iinukami and contributors.
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * Additional terms under AGPLv3 Section 7: see LICENSE-ADDITIONAL.
+ */
 export const page = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>QQ 空间</title>
 <style>:root{color-scheme:light dark}body{font:15px/1.65 system-ui;margin:24px auto;max-width:740px;padding:0 20px}h1{font-size:24px}section{border:1px solid #8886;border-radius:12px;padding:20px;margin:18px 0}textarea{display:block;width:100%;box-sizing:border-box;min-height:140px;margin:8px 0}button{padding:8px 18px;cursor:pointer}label{display:block;margin:10px 0}small{opacity:.75}#notice{white-space:pre-wrap}pre{white-space:pre-wrap;overflow-wrap:anywhere}input{margin:6px}</style></head><body>
 <h1>QQ 空间</h1><p>她自行决定是否浏览、发表和互动。发表与转发范围为<strong>所有人可见</strong>，发表可使用图库配图。</p>

@@ -1,3 +1,7 @@
+/*! Copyright (c) 2026 iinukami and contributors.
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * Additional terms under AGPLv3 Section 7: see LICENSE-ADDITIONAL.
+ */
 import type { ToolSession } from 'whalelife';
 /** QZone service v1. No cookies, arbitrary actions, file paths or model-supplied identity. */
 export interface ImageSnapshot { id: string; mime: string; base64: string; description?: string }

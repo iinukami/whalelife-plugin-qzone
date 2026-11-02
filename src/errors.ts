@@ -1,3 +1,7 @@
+/*! Copyright (c) 2026 iinukami and contributors.
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * Additional terms under AGPLv3 Section 7: see LICENSE-ADDITIONAL.
+ */
 import { QQError } from './validation.ts';
 /** Errors cross process boundaries as plain Error. Only our exact fixed messages
  * may cross back to a model/page; never echo HTTP responses, cookies or raw errors. */

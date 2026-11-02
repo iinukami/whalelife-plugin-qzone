@@ -1,3 +1,7 @@
+/*! Copyright (c) 2026 iinukami and contributors.
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * Additional terms under AGPLv3 Section 7: see LICENSE-ADDITIONAL.
+ */
 import type { Context, ToolSession } from 'whalelife';
 import { QQError, account } from './validation.ts';
 import { publishInput, sessionId, stableId } from './policy.ts';
