@@ -19,6 +19,8 @@ export interface QQSpaceTransport {
   qzoneInteract?(input: { sessionId: string; ref: string; action: Interaction }, options: { signal: AbortSignal }): Promise<SocialTransportReceipt>;
   qzoneReadImage?(input: { sessionId: string; ref: string; index: number }, options: { signal: AbortSignal }): Promise<{ mime: string; base64: string }>;
   qzoneDescribeImage?(input: { sessionId: string; ref: string; index: number }, options: { signal: AbortSignal }): Promise<string>;
+  qzoneVideoApiVersion?: string;
+  qzoneReadVideo?(input: { sessionId: string; ref: string; index: number }, options: { signal: AbortSignal }): Promise<{ mime: 'video/mp4' | 'video/webm'; base64: string }>;
 }
 export interface ActionKey { sessionId: string; actionId: string; accountId: string }
 export interface PublishInput { actionId: string; content: string; imageIds?: string[] }
@@ -39,7 +41,8 @@ export interface Interaction {
   kind: 'like' | 'comment' | 'repost'; text?: string;
   reply?: { commentId: string; authorId: string }; mentions?: string[];
 }
-/** Future visual plugins register only through a declared dependency on qq/qzone.
+/** Legacy description-only visual extension; preserved for existing consumers.
+ * Native video viewing uses the optional vision service inside this plugin.
  * Results are ephemeral, must never be returned by a persistent model tool.
  */
 export interface VisualRequest { kind: 'image' | 'video'; mime: string; base64: string }
@@ -57,6 +60,8 @@ export interface PostTarget {
 }
 export interface BrowsePost extends Omit<SpacePost, 'images'> {
   ref: string; imageCount: number; interactive: boolean;
+  /** Count of supported video sources sealed into this reference, not detection alone. */
+  videoCount?: number;
   comments: (SpacePost['comments'][number] & { replyable: boolean })[];
 }
 export interface BrowseResult { accountId: string; posts: BrowsePost[]; cursor?: string; source?: 'feed' | 'profile'; hasMore: boolean; skipped: number; diagnostics?: Record<string, number> }
