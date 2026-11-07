@@ -12,6 +12,8 @@ export interface QQSpaceTransport {
   qzoneStatus(): Promise<{ accountId: string | null; online: boolean }>;
   qzonePublish(input: PublishPayload, options: { signal: AbortSignal }): Promise<TransportReceipt>;
   qzoneSocialApiVersion?: string;
+  qzoneReferenceApiVersion?: string;
+  qzoneReferenceStatus?(input: ReferenceInput, options: { signal: AbortSignal }): Promise<ReferenceStatus>;
   qzoneBrowse?(input: BrowseInput, options: { signal: AbortSignal }): Promise<BrowseResult>;
   qzoneResolve?(input: { sessionId: string; ref: string }, options: { signal: AbortSignal }): Promise<PostTarget>;
   qzoneInteract?(input: { sessionId: string; ref: string; action: Interaction }, options: { signal: AbortSignal }): Promise<SocialTransportReceipt>;
@@ -44,6 +46,10 @@ export interface VisualRequest { kind: 'image' | 'video'; mime: string; base64: 
 export type VisualReader = (input: VisualRequest, options: { signal: AbortSignal }) => Promise<string>;
 
 export interface BrowseInput { sessionId: string; authorId?: string; cursor?: string; count?: number }
+export interface ReferenceInput { sessionId: string; ref: string; expectedKind?: 'post' | 'cursor' }
+export type ReferenceFailure = 'invalid_reference' | 'unreadable_reference' | 'offline' | 'account_changed' | 'session_mismatch' | 'expired' | 'wrong_kind';
+export type ReferenceStatus = { valid: true; kind: 'post' | 'cursor'; expiresAt: number }
+  | { valid: false; reason: ReferenceFailure; message: string };
 export interface PostTarget {
   accountId: string; authorId: string; tid: string; kind: SpacePost['kind'];
   typeId: string; timestamp: string; interactive: boolean;

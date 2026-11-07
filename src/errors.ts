@@ -3,6 +3,22 @@
  * Additional terms under AGPLv3 Section 7: see LICENSE-ADDITIONAL.
  */
 import { QQError } from './validation.ts';
+import type { QQSpaceTransport, ReferenceFailure, ReferenceInput } from './types.ts';
+export const readFailure = '读取未完成，请检查 QQ 连接或重新浏览后再尝试。';
+const legacyReferenceError = '动态引用已过期、账号已变化或不属于本会话，请重新浏览。';
+// Older QQ entry points also report wrong reference kinds via these messages.
+// A valid diagnostic must preserve an actual image-index/range failure.
+const referenceErrors = new Set([legacyReferenceError, '需要动态引用。', '翻页引用与浏览范围不一致。', '图片序号无效。']);
+// Public v1 diagnostics are fixed messages, never arbitrary provider error text.
+const referenceMessages: Record<ReferenceFailure, string> = {
+  invalid_reference: '动态引用格式无效，请重新浏览并使用返回的完整引用。',
+  unreadable_reference: '动态引用无法校验，可能来自已重载的连接或内容已损坏；请重新浏览。',
+  offline: 'QQ 不在线，请恢复原账号连接后再检查引用。',
+  account_changed: '动态引用所属 QQ 账号与当前账号不一致，请用当前账号重新浏览。',
+  session_mismatch: '动态引用不属于本会话，请在当前会话重新浏览。',
+  expired: '动态引用已超过有效期，请重新浏览。',
+  wrong_kind: '引用类型不符，动态引用和翻页引用不能混用。',
+};
 /** Errors cross process boundaries as plain Error. Only our exact fixed messages
  * may cross back to a model/page; never echo HTTP responses, cookies or raw errors. */
 const known = new Set([
@@ -16,4 +32,20 @@ const known = new Set([
 ]);
 export function spaceError(error: unknown, fallback: string): string {
   return error instanceof QQError || (error instanceof Error && (known.has(error.message) || /^空间响应解析失败（行 \d+，列 \d+，字符码 \d+）。$/.test(error.message))) ? error.message : fallback;
+}
+
+/** Explain a failed reference at query time; never turn diagnostics into success,
+ * replay an operation, or persist the reference/result. Old QQ stays compatible. */
+export async function referenceError(error: unknown, fallback: string, qq: QQSpaceTransport,
+  input: Omit<ReferenceInput, 'ref'> & { ref: unknown }, signal: AbortSignal): Promise<string> {
+  const original = spaceError(error, fallback);
+  if (!(error instanceof Error) || !referenceErrors.has(error.message) || signal.aborted
+    || typeof input.ref !== 'string' || input.ref.length > 65536
+    || qq.qzoneReferenceApiVersion !== '1.0.0' || typeof qq.qzoneReferenceStatus !== 'function') return original;
+  try {
+    const result = await qq.qzoneReferenceStatus({ ...input, ref: input.ref }, { signal });
+    if (!signal.aborted && result?.valid === false && Object.hasOwn(referenceMessages, result.reason)
+      && result.message === referenceMessages[result.reason]) return result.message;
+  } catch { /* Optional diagnostics must not hide the original failure. */ }
+  return original;
 }

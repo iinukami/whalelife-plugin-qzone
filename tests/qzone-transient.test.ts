@@ -122,7 +122,7 @@ test('qzone in-flight interaction cancellation retains uncertainty; read-only pr
   assert.equal(r.status, 'uncertain'); assert.equal((await qq.testCalls()).length, 1); await checkClean(f);
 });
 
-test('QQ transient final reply is delivered once without private text plans; copied publish inputs/IDs do not persist', { timeout: 35000 }, async t => {
+test('QQ transient send tool and final reply each deliver once without private text plans; copied publish inputs/IDs do not persist', { timeout: 35000 }, async t => {
   const f = await fixture(t, { config: { permission: 'full' }, preparePlugin: enabled, prepareHost: async root => {
     await mkdir(join(root, 'plugins/temporary-probe'), { recursive: true });
     await writeFile(join(root, 'plugins/temporary-probe/plugin.yaml'), 'id: temporary-probe\nname: temporary probe\nversion: 1.0.0\ndescription: test\n');
@@ -132,18 +132,22 @@ test('QQ transient final reply is delivered once without private text plans; cop
   f.setAction((data, socket) => { if (data.action !== 'send_qzone_msg') return false; socket.send(JSON.stringify({ echo: data.echo, status: 'ok', retcode: 0, data: { tid: 'actual_own_post' } })); return true; });
   let round = 0;
   f.setGenerate(async () => ++round === 1 ? { text: '', toolCalls: [toolCall('external_read')] }
-    : round === 2 ? { text: '', toolCalls: [toolCall('qzone_publish', { actionId: foreign, content: foreign }), toolCall('qq_send_message', { userId: '200002', messageId: 'copied', text: foreign })] }
-    : { text: foreign, toolCalls: [] });
+    : round === 2 ? { text: '', toolCalls: [toolCall('qzone_publish', { actionId: foreign, content: foreign }), toolCall('qq_send_message', { userId: '200002', messageId: 'copied', text: foreign + '-tool' })] }
+    : { text: foreign + '-reply', toolCalls: [] });
   f.send({ message_id: 431 });
   await until(() => f.calls.some(c => c.action === 'send_private_msg'));
   await until(async () => (await f.status()).queued === 0);
-  assert.equal(f.calls.filter(c => c.action === 'send_private_msg').length, 1);
-  assert.equal(f.calls.find(c => c.action === 'send_private_msg').params.message[0].data.text, foreign);
+  assert.deepEqual(f.calls.filter(c => c.action === 'send_private_msg').map(c => c.params.message[0].data.text), [foreign + '-tool', foreign + '-reply']);
   assert.equal(f.calls.filter(c => c.action === 'send_qzone_msg').length, 1);
   await checkClean(f);
   const files = await readdir(join(f.root, 'plugins/qq/data'));
-  const plan = JSON.parse(await readFile(join(f.root, 'plugins/qq/data', files.find(n => n.startsWith('delivery-'))!), 'utf8'));
-  assert.equal(plan.transient, true); assert.equal(plan.texts, undefined); assert.equal(plan.parts[0].state, 'sent');
+  const plans = files.filter(n => n.startsWith('delivery-')); assert.equal(plans.length, 2);
+  for (const name of plans) {
+    const plan = JSON.parse(await readFile(join(f.root, 'plugins/qq/data', name), 'utf8'));
+    assert.equal(plan.transient, true); assert.equal(plan.texts, undefined); assert.equal(plan.parts[0].state, 'sent');
+  }
   await f.app.runtime.action('qq', 'reload'); await f.online(); f.send({ message_id: 431 });
-  await new Promise(r => setTimeout(r, 150)); assert.equal(f.calls.filter(c => c.action === 'send_private_msg').length, 1); await checkClean(f);
+  const duplicate = await f.app.tools.call('qq_send_message', { userId: '200002', messageId: 'copied', text: foreign + '-tool' }, { id: await f.app.sessions.current(), permission: 'full', transientContext: true });
+  assert.equal(duplicate.result.duplicate, true); assert.equal(duplicate.result.confirmed, true);
+  await new Promise(r => setTimeout(r, 150)); assert.equal(f.calls.filter(c => c.action === 'send_private_msg').length, 2); assert.equal(round, 3); await checkClean(f);
 });
