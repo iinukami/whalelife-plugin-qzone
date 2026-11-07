@@ -57,7 +57,7 @@ export async function apply(ctx: Context) {
     .every(k => typeof qq[k as keyof QQSpaceTransport] === 'function');
   const galleryActive = () => config.galleryEnabled !== false && media.active();
   const status = async () => {
-    const videoState = await video.status(ctx.signal);
+    const videoState = video.cachedStatus();
     return { ...(await qq.qzoneStatus()), enabled: config.enabled, visibility: config.visibility, gallery: galleryActive(),
     galleryMode: builtinGallery ? 'builtin' : 'legacy', galleryEnabled: config.galleryEnabled !== false,
     video: videoState,
@@ -124,7 +124,7 @@ export async function apply(ctx: Context) {
           requireEnabled();
           if (Object.keys(object(args)).some(k => !['authorId', 'cursor', 'count'].includes(k))) throw new QQError('input', '空间浏览参数无效。');
           const result = await qq.qzoneBrowse!({ sessionId: sessionId(s.id), ...args }, { signal: s.signal });
-          const videoState = await video.status(s.signal);
+          const videoState = video.cachedStatus();
           s.signal.throwIfAborted();
           return { content: { ...result, posts: result.posts.map(p => ({ ...p,
             imageAccess: p.imageCount > 0 ? { tool: 'qzone_read_image', indices: Array.from({ length: Math.min(8, p.imageCount) }, (_, index) => index) } : null,

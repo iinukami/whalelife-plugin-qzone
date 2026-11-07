@@ -43,18 +43,42 @@ async function bounded<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
  * tool; vision_view alone delivers native image parts to the current model. */
 export class SpaceVideo {
   private binding?: Binding;
+  private snapshot?: { value: VideoState; expires: number };
+  private probe?: { controller: AbortController };
   private qq: QQSpaceTransport;
   private hostReady: boolean;
   constructor(qq: QQSpaceTransport, hostReady: boolean) { this.qq = qq; this.hostReady = hostReady; }
-  bind(binding: Binding) {
-    this.binding = binding;
-    return () => { if (this.binding === binding) this.binding = undefined; };
+  private clearStatus() {
+    this.probe?.controller.abort(); this.probe = undefined; this.snapshot = undefined;
   }
-  async status(caller?: AbortSignal, binding = this.binding): Promise<VideoState> {
+  bind(binding: Binding) {
+    this.clearStatus();
+    this.binding = binding;
+    return () => { if (this.binding === binding) { this.binding = undefined; this.clearStatus(); } };
+  }
+  private unavailable(binding = this.binding): VideoState | undefined {
     if (this.qq.qzoneVideoApiVersion !== '1.0.0' || typeof this.qq.qzoneReadVideo !== 'function')
       return state('transport_required', '当前 QQ 插件尚未提供空间视频读取接口。');
     if (!this.hostReady) return state('multimodal_required', '空间视频需要宿主的可选服务和原生多模态工具接口。');
     if (!binding || binding.signal.aborted) return state('vision_required', '空间视频需要启用视觉插件。');
+  }
+  /** Browsing and the settings page never wait for an optional provider. Refresh
+   * on demand, at most once per 30 seconds; opening media still checks afresh. */
+  cachedStatus(): VideoState {
+    const missing = this.unavailable(); if (missing) return missing;
+    const binding = this.binding!;
+    if ((!this.snapshot || this.snapshot.expires <= Date.now()) && !this.probe) {
+      const probe = { controller: new AbortController() }; this.probe = probe;
+      void this.status(probe.controller.signal, binding).then(value => {
+        if (this.binding === binding && this.probe === probe && !probe.controller.signal.aborted)
+          this.snapshot = { value, expires: Date.now() + 30000 };
+      }).finally(() => { if (this.probe === probe) this.probe = undefined; });
+    }
+    return this.snapshot?.value ?? state('checking', '正在检查视觉插件；其他空间功能可正常使用。');
+  }
+  async status(caller?: AbortSignal, binding = this.binding): Promise<VideoState> {
+    const missing = this.unavailable(binding); if (missing) return missing;
+    binding = binding!;
     const signal = AbortSignal.any([binding.signal, AbortSignal.timeout(5000), ...(caller ? [caller] : [])]);
     try {
       const v = await bounded(Promise.resolve(binding.service.status()), signal);

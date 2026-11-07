@@ -82,11 +82,11 @@ async function fakeQQ(root: string, bytes = video.base64, modern = true) {
       testReads:()=>reads,testHold:value=>{held=value;},ping:()=> 'private independent'});
   }`);
 }
-async function fakeVision(root: string) {
+async function fakeVision(root: string, hung = false) {
   const dir = join(root, 'plugins/vision'); await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'plugin.yaml'), 'id: vision\nname: vision\nversion: 1.0.0\ndescription: isolated video service\n');
   await writeFile(join(dir, 'index.ts'), `export function apply(ctx) {let offers=[];
-    ctx.provide('vision',{status:()=>(${JSON.stringify(ready)}),offerMedia:(input)=>{offers.push(input.sessionId);return ${JSON.stringify(offer)};},release:()=>({released:true}),testOffers:()=>offers});
+    ctx.provide('vision',{status:()=>(${hung ? 'new Promise(()=>{})' : JSON.stringify(ready)}),offerMedia:(input)=>{offers.push(input.sessionId);return ${JSON.stringify(offer)};},release:()=>({released:true}),testOffers:()=>offers});
   }`);
 }
 async function disk(root: string): Promise<string> {
@@ -140,6 +140,50 @@ test('installed video integration binds optionally, rejects forged inputs, respe
   assert.equal(await f.app.runtime.services.get('witness')!.value.ping(), 'alive');
   const stored = await disk(join(f.root, 'memory')) + await disk(join(f.root, 'logs')) + await disk(join(f.root, 'plugins/qq/sub/qzone/data'));
   for (const value of [secret, ref, mediaRef, video.base64]) assert.ok(!stored.includes(value));
+});
+
+test('cached status coalesces probes, ignores detached results and never authorizes opening from stale readiness', async t => {
+  let calls = 0, reads = 0, finish!: (v: typeof ready) => void;
+  const qq = { qzoneVideoApiVersion: '1.0.0', qzoneReadVideo: async () => { reads++; return video; } } as unknown as QQSpaceTransport;
+  const x = new SpaceVideo(qq, true), signal = new AbortController().signal;
+  const service = { status: () => { calls++; return new Promise<typeof ready>(r => { finish = r; }); }, offerMedia: async () => offer, release: async () => {} };
+  const remove = x.bind({ signal, service });
+  for (let i = 0; i < 100; i++) assert.equal(x.cachedStatus().reason, 'checking');
+  assert.equal(calls, 1); remove(); assert.equal(x.cachedStatus().reason, 'vision_required');
+  let healthy = false, fastCalls = 0;
+  x.bind({ signal, service: { ...service, status: () => { fastCalls++; return { ...ready, mediaPreparation: healthy }; } } });
+  assert.equal(x.cachedStatus().reason, 'checking');
+  await until(() => x.cachedStatus().reason === 'vision_unavailable');
+  finish(ready); await new Promise(r => setTimeout(r, 10));
+  assert.equal(x.cachedStatus().reason, 'vision_unavailable'); assert.equal(fastCalls, 1);
+  let now = Date.now(); t.mock.method(Date, 'now', () => now); now += 30001; healthy = true;
+  assert.equal(x.cachedStatus().reason, 'vision_unavailable', 'refresh returns the old snapshot immediately');
+  await until(() => x.cachedStatus().available); assert.equal(fastCalls, 2);
+  healthy = false; await assert.rejects(x.open(input, signal), /暂时不能准备媒体/);
+  assert.equal(reads, 0, 'opening always verifies current readiness before downloading');
+});
+
+test('a hung optional vision status does not block space browse, settings, images or the parent', { timeout: 30000 }, async t => {
+  const f = await fixture(t, { preparePlugin: root => fakeQQ(root), prepareHost: root => fakeVision(root, true) });
+  const status = async () => (await f.request('/plugins/qq/qzone/status')).json();
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([until(async () => (await status()).video.reason === 'checking'),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(Error('optional status blocked settings')), 3000); })]);
+  } finally { clearTimeout(timer); }
+  const pid = f.app.runtime.records.get('qq/qzone').execution.pid;
+  const session = { id: 'trusted', permission: 'full' as const, personaId: 'a' };
+  try {
+    const browse = await Promise.race([f.app.tools.call('qzone_browse', {}, session),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(Error('optional status blocked browse')), 3000); })]);
+    assert.equal(browse.result.posts.length, 3); assert.equal(browse.result.posts[2].videoAccess, null);
+  } finally { clearTimeout(timer); }
+  assert.equal((await f.app.tools.call('qzone_read_image', { ref, index: 0 }, session)).result.description, 'existing image works');
+  assert.equal(await f.app.runtime.services.get('qq')!.value.ping(), 'private independent');
+  await f.app.runtime.action('vision', 'stop');
+  await until(async () => (await status()).video.reason === 'vision_required');
+  assert.equal(f.app.runtime.records.get('qq/qzone').execution.pid, pid);
+  assert.equal(await f.app.runtime.services.get('witness')!.value.ping(), 'alive');
 });
 
 test('old QQ keeps image and browse capabilities while reporting its missing video transport', { timeout: 25000 }, async t => {
