@@ -67,7 +67,7 @@ test('video adapter cancels downloads when the optional connection goes away and
 });
 
 async function fakeQQ(root: string, bytes = video.base64, modern = true) {
-  await writeFile(join(root, 'plugin.yaml'), 'id: qq\nname: qq\nversion: 1.0.0\ndescription: isolated space video transport\nsub: [qzone]\n');
+  await writeFile(join(root, 'plugin.yaml'), 'id: qq\nname: qq\nversion: 1.0.0\ndescription: isolated space video transport\ndepends: [sessions]\nsub: [qzone]\n');
   await mkdir(join(root, 'sub/qzone/data'), { recursive: true });
   await writeFile(join(root, 'sub/qzone/data/config.json'), JSON.stringify({ ...defaultConfig, enabled: true }));
   await writeFile(join(root, 'index.ts'), `export function apply(ctx) {
@@ -79,6 +79,7 @@ async function fakeQQ(root: string, bytes = video.base64, modern = true) {
         {...target,ref:'unsupported',imageCount:0,hasVideo:true,videoCount:0},{...target,ref:'text-only',imageCount:0,hasVideo:false}],hasMore:false,skipped:0}),
       qzoneReadImage:()=>({mime:'image/png',base64:'synthetic'}),qzoneDescribeImage:()=> 'existing image works',
       ${modern ? `qzoneVideoApiVersion:'1.0.0',qzoneReadVideo:async (input,{signal})=>{reads.push(input);if(held)await new Promise(r=>signal.addEventListener('abort',r,{once:true}));signal.throwIfAborted();if(input.ref!==${JSON.stringify(ref)})throw Error('动态引用已过期、账号已变化或不属于本会话，请重新浏览。');return {mime:'video/mp4',base64:${JSON.stringify(bytes)}};},` : ''}
+      testRun:(sessionId,text)=>ctx.sessions.runTransient({sessionId,text,persona:'a',permission:'full'}),
       testReads:()=>reads,testHold:value=>{held=value;},ping:()=> 'private independent'});
   }`);
 }
@@ -196,7 +197,7 @@ test('old QQ keeps image and browse capabilities while reporting its missing vid
   assert.match((await f.app.tools.call('qzone_open_video', { ref, index: 0 }, session)).result.error, /QQ 插件尚未提供/);
 });
 
-test('actual vision package: synthetic space video reaches the same main model as native frames and never future memory', { timeout: 60000 }, async t => {
+for (const technical of [false, true]) test(`actual vision package, ${technical ? 'technical run' : 'ordinary chat'}: native frames stay temporary while final replies follow retention rules`, { timeout: 60000 }, async t => {
   const temp = await temporaryDirectory('whale-space-video-media-');
   const visionRoot = fileURLToPath(new URL('../../whalelife-plugin-vision/dist/vision/', import.meta.url));
   const movie = join(temp, 'synthetic.mp4');
@@ -208,6 +209,7 @@ test('actual vision package: synthetic space video reaches the same main model a
   const status = async () => (await f.request('/plugins/qq/qzone/status')).json();
   await until(async () => (await status()).capabilities.video, 15000);
   const sid = await f.app.sessions.create('space-native-video');
+  const reply = technical ? secret + ' understood this technical run only' : '采样画面是一片蓝色，没有读取音频。';
   let round = 0, visualRef = '', imageData = '';
   const events: unknown[] = []; f.app.runtime.events.on('tool/called', (v: unknown) => events.push(v));
   f.setGenerate(async request => {
@@ -225,13 +227,18 @@ test('actual vision package: synthetic space video reaches the same main model a
       imageData = content.find((p: any) => p.type === 'image_url')?.image_url.url;
       assert.match(imageData, /^data:image\/jpeg;base64,/);
       assert.ok(content.some((p: any) => p.type === 'text' && p.text.includes('audioIncluded')));
-      return { text: secret + ' understood this turn only', toolCalls: [] };
+      return { text: reply, toolCalls: [] };
     }
     const next = JSON.stringify(request);
     for (const privateValue of [secret, ref, visualRef, bytes, imageData]) assert.ok(!next.includes(privateValue), 'previous video leaked into a later turn');
+    assert.equal(request.messages.some((m: any) => m.role === 'assistant' && m.content === reply), !technical);
+    assert.ok(!request.messages.some((m: any) => Array.isArray(m.content) && m.content.some((p: any) => p.type === 'image_url')), 'native frames must not survive into a later turn');
     return { text: 'next turn clean', toolCalls: [] };
   });
-  await f.app.sessions.chat(sid, '查看测试视频', () => {}, undefined, 'a', { channel: 'web', account: 'web', peer: sid, persona: 'a', permission: 'full' });
+  const answer = technical ? await f.app.runtime.services.get('qq')!.value.testRun(sid, '查看测试视频')
+    : await f.app.sessions.chat(sid, '查看测试视频', () => {}, undefined, 'a', { channel: 'web', account: 'web', peer: sid, persona: 'a', permission: 'full' });
+  assert.equal(answer, reply);
+  assert.equal((await f.app.memory.readSession(sid)).some((r: any) => r.role === 'assistant' && r.text === reply && !r.transient), !technical);
   assert.equal(round, 4);
   const refused = await f.app.tools.call('vision_view', { mediaRef: visualRef, sessionId: sid }, { id: 'other-session', permission: 'full' });
   assert.ok(!refused.result.some((p: any) => p.type === 'image'));

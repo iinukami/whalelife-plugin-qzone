@@ -119,14 +119,16 @@ test('real QZone/gallery workers collect selected original only; nested tool res
   assert.equal(await disk(galleryRoot), before, 'ordinary browsing must never offer or store an image');
   assert.equal((await call('qzone_collect_image', args, { ...live, id: 'other' })).status, 'blocked');
   const events: any[] = []; f.app.runtime.events.on('tool/called', (event: unknown) => events.push(event));
+  const reply = '已收藏选中的图片。';
   let round = 0, saved: any;
   f.setGenerate(async input => {
     const tool = (name: string, value: unknown) => ({ id: name, name, arguments: JSON.stringify(value) });
     if (++round === 1) return { text: '', toolCalls: [tool('qzone_browse', {})] };
     if (round === 2) { assert.ok(JSON.stringify(input).includes(foreign)); return { text: '', toolCalls: [tool('qzone_collect_image', args)] }; }
-    return { text: foreign, toolCalls: [] };
+    return { text: reply, toolCalls: [] };
   });
   await f.app.sessions.chat(sid, '收藏选中图片', () => {}, undefined, 'a', { channel: 'web', account: 'web', peer: sid, persona: 'a', permission: 'full' });
+  assert.ok((await f.app.memory.readSession(sid)).some((r: any) => r.role === 'assistant' && r.text === reply && !r.transient));
   saved = await call('qzone_delivery', { accountId: '100001', actionId: args.actionId });
   assert.equal(saved.status, 'saved'); assert.ok(saved.assetId); assert.ok(saved.jobId);
   const gallery = f.app.runtime.services.get('gallery')!.value;

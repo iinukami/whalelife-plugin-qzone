@@ -71,7 +71,7 @@ async function disk(root: string): Promise<string> {
   return content;
 }
 
-for (const diagnostic of [true, false]) test(`installed space with ${diagnostic ? 'v1' : 'old'} QQ: trusted diagnostic routing, read/action errors and no persistent reference`, { timeout: 40000 }, async t => {
+for (const diagnostic of [true, false]) for (const technical of [false, true]) test(`installed space with ${diagnostic ? 'v1' : 'old'} QQ, ${technical ? 'technical run' : 'ordinary chat'}: diagnostic replies follow retention rules without storing references`, { timeout: 40000 }, async t => {
   const f = await fixture(t, { preparePlugin: async root => {
     await mkdir(join(root, 'sub/qzone/data'), { recursive: true });
     await writeFile(join(root, 'sub/qzone/data/config.json'), JSON.stringify({ ...defaultConfig, enabled: true, interactionWhitelist: ['200002'] }));
@@ -83,6 +83,7 @@ for (const diagnostic of [true, false]) test(`installed space with ${diagnostic 
         qzoneBrowse:()=>reject('browse'),qzoneResolve:()=>reject('resolve'),qzoneReadImage:()=>reject('image'),qzoneDescribeImage:()=>reject('describe'),
         qzoneInteract:()=>{writes++;return {status:'uncertain'};},
         ${diagnostic ? `qzoneReferenceApiVersion:'1.0.0',qzoneReferenceStatus:(input,{signal})=>{signal.throwIfAborted();diagnostics.push(input);return {valid:false,reason:'session_mismatch',message:${JSON.stringify(messages.session_mismatch)}};},` : ''}
+        testRun:(sessionId,text)=>ctx.sessions.runTransient({sessionId,text,persona:'a',permission:'full'}),
         testGeneric:()=>{generic=true;},testState:()=>({diagnostics,attempts,writes})});
     }`);
     const probe = join(root, 'sub/qzone/sub/collector-probe');
@@ -115,13 +116,17 @@ for (const diagnostic of [true, false]) test(`installed space with ${diagnostic 
   assert.equal((await preview.json()).error, diagnostic ? messages.session_mismatch : legacy);
   if (diagnostic) assert.equal((await qq.testState()).diagnostics.at(-1).sessionId, 'admin-preview');
   const events: any[] = []; f.app.runtime.events.on('tool/called', (e: any) => events.push(e));
+  const diagnosis = diagnostic ? messages.session_mismatch : legacy;
+  const reply = '图片未读到：' + diagnosis;
   let round = 0;
   f.setGenerate(async input => {
     if (++round === 1) return { text: '', toolCalls: [{ id: 'read', name: 'qzone_read_image', arguments: JSON.stringify({ ref, index: 0 }) }] };
-    assert.ok(JSON.stringify(input).includes(diagnostic ? messages.session_mismatch : legacy));
-    return { text: '本轮临时诊断：' + messages.session_mismatch, toolCalls: [] };
+    assert.ok(JSON.stringify(input).includes(diagnosis));
+    return { text: reply, toolCalls: [] };
   });
-  await f.app.sessions.chat(sid, '查看测试图片', () => {}, undefined, 'a', { channel: 'web', account: 'web', peer: sid, persona: 'a', permission: 'full' });
+  const answer = technical ? await qq.testRun(sid, '查看测试图片')
+    : await f.app.sessions.chat(sid, '查看测试图片', () => {}, undefined, 'a', { channel: 'web', account: 'web', peer: sid, persona: 'a', permission: 'full' });
+  assert.equal(answer, reply);
   await f.app.runtime.events.drain();
   await qq.testGeneric();
   const count = (await qq.testState()).diagnostics.length;
@@ -131,8 +136,22 @@ for (const diagnostic of [true, false]) test(`installed space with ${diagnostic 
   }
   const action = (await f.app.tools.call('qzone_like', { actionId: 'generic', ref }, session)).result;
   assert.match(action.error, /原动作 ID.*回执/); assert.equal((await qq.testState()).diagnostics.length, count);
-  const persisted = JSON.stringify(events) + await disk(join(f.root, 'memory')) + await disk(join(f.root, 'logs')) + await disk(join(f.root, 'plugins/qq/sub/qzone/data'));
-  for (const privateText of [ref, secret, messages.session_mismatch, legacy]) assert.ok(!persisted.includes(privateText), 'temporary diagnosis/reference leaked');
+  const memory = await disk(join(f.root, 'memory'));
+  const audit = JSON.stringify(events) + await disk(join(f.root, 'logs')) + await disk(join(f.root, 'plugins/qq/sub/qzone/data'));
+  const history = await f.app.memory.readSession(sid), tools = JSON.stringify(history.filter((r: any) => r.type === 'tool'));
+  assert.equal(history.some((r: any) => r.role === 'assistant' && r.text === reply && !r.transient), !technical);
+  for (const privateText of [ref, secret]) assert.ok(!(audit + memory).includes(privateText), 'temporary reference/provider error leaked');
+  for (const text of [messages.session_mismatch, legacy]) {
+    assert.ok(!(audit + tools).includes(text), 'raw tool diagnosis leaked into audit data');
+    assert.equal(memory.includes(text), !technical && text === diagnosis, 'only the spoken diagnosis belongs in chat history');
+  }
+  f.setGenerate(async input => {
+    assert.equal(input.messages.some((m: any) => m.role === 'assistant' && m.content === reply), !technical);
+    for (const privateText of [ref, secret]) assert.ok(!JSON.stringify(input).includes(privateText));
+    if (technical) assert.ok(!JSON.stringify(input).includes(diagnosis));
+    return { text: '继续交流', toolCalls: [] };
+  });
+  await f.app.sessions.chat(sid, '继续', () => {}, undefined, 'a');
   assert.equal((await qq.testState()).writes, 0);
   assert.equal(await f.app.runtime.services.get('witness')!.value.ping(), 'alive');
 });
