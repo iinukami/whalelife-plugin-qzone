@@ -1,6 +1,6 @@
 id: qzone
 name: QQ 空间
-version: 0.5.1
+version: 0.5.2
 description: 临时浏览、识图与视频画面查看、选中图片收藏、公开发表说说和白名单互动。
 apiVersion: "1.0.0"
 depends: [qq, sessions, memory, tools, web]

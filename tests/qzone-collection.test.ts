@@ -62,6 +62,55 @@ test('collection rejects invalid inputs, permissions, disabled/absent bridge and
   assert.deepEqual(await readdir(f.root), []);
 });
 
+test('confirmed collection keeps its durability warning through queries, hash lookup and duplicate requests without another handoff', async () => {
+  const f = await unit(), internal = f.c as any, save = internal.save.bind(f.c);
+  let writes = 0;
+  internal.save = async (value: unknown, first: boolean) => {
+    writes++;
+    if (!first) throw Error('SYNTHETIC_FINAL_RECEIPT_WRITE_FAILURE');
+    return save(value, first);
+  };
+  const [first, concurrent] = await Promise.all([f.c.collect(selection, session), f.c.collect(selection, session)]);
+  assert.equal(first.status, 'saved'); assert.equal(first.assetId, assetId);
+  assert.equal(first.persistenceError, true); assert.equal(concurrent.persistenceError, true);
+  assert.equal(concurrent.duplicate, true);
+  for (const id of [selection.actionId, first.actionIdHash]) {
+    const found = await f.c.delivery({ actionId: id, accountId: '100001' }, session);
+    assert.equal(found.status, 'saved'); assert.equal(found.confirmed, true);
+    assert.ok('persistenceError' in found); assert.equal(found.persistenceError, true);
+    assert.equal(found.canRetry, false); assert.equal(found.retryAutomatically, false);
+  }
+  // A recovered disk does not make a read-only lookup or a duplicate action a repair operation.
+  internal.save = save;
+  const repeated = await f.c.collect(selection, session);
+  assert.equal(repeated.duplicate, true); assert.equal(repeated.persistenceError, true);
+  await assert.rejects(f.c.collect({ ...selection, index: 1 }, session), /同一收藏动作/);
+  assert.equal((await f.c.delivery({ actionId: first.actionIdHash, accountId: '100001' }, { ...session, id: 'other' })).status, 'not_found');
+  const stored = await readFile(join(f.root, (await readdir(f.root))[0]), 'utf8');
+  assert.equal(JSON.parse(stored).status, 'pending'); assert.equal(writes, 2);
+  for (const secret of [selection.ref, selection.actionId, 'SELECTED_ORIGINAL_BYTES', 'SYNTHETIC_FINAL_RECEIPT_WRITE_FAILURE']) assert.ok(!stored.includes(secret));
+  const restarted = f.create();
+  for (const found of [await restarted.delivery({ actionId: first.actionIdHash, accountId: '100001' }, session), await restarted.collect(selection, session)]) {
+    assert.equal(found.status, 'uncertain'); assert.equal(found.confirmed, false);
+    assert.equal(found.canRetry, false); assert.equal(found.retryAutomatically, false);
+  }
+  assert.deepEqual(f.counts(), { resolves: 1, reads: 1, handoffs: 1 });
+});
+
+test('successfully persisted collection no longer hides the durable receipt behind a volatile copy', async () => {
+  const f = await unit(), first = await f.c.collect(selection, session);
+  assert.equal(first.persistenceError, false);
+  for (const id of [selection.actionId, first.actionIdHash]) {
+    const found = await f.c.delivery({ actionId: id, accountId: '100001' }, session);
+    assert.ok('persistenceError' in found); assert.equal(found.persistenceError, false);
+  }
+  const path = join(f.root, (await readdir(f.root))[0]);
+  await writeFile(path, '{synthetic-corruption');
+  await assert.rejects(f.c.delivery({ actionId: selection.actionId, accountId: '100001' }, session), /收藏回执损坏/);
+  await assert.rejects(f.c.collect(selection, session), /收藏回执损坏/);
+  assert.equal(f.counts().handoffs, 1);
+});
+
 for (const failure of ['throw', 'bad-receipt', 'cancel', 'stop'] as const) test(`collection ${failure} remains uncertain without replay`, async () => {
   const f = await unit(), controller = new AbortController();
   f.handler(async (_input, { signal }) => {

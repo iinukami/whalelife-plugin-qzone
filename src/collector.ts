@@ -27,6 +27,7 @@ const response = (v: CollectionLedger, duplicate = false, persistenceError = fal
  * No ref, URL, caption, post body or comment is written into this receipt store. */
 export class Collector {
   private active = new Map<string, { fingerprint: string; promise: Promise<ReturnType<typeof response>> }>();
+  // Only receipts whose final write has not succeeded remain here.
   private volatile = new Map<string, CollectionLedger>();
   private qq: QQSpaceTransport;
   private config: () => QzoneConfig;
@@ -66,7 +67,7 @@ export class Collector {
   async delivery(input: { actionId: unknown; accountId: unknown }, session: ToolSession) {
     const key = { actionId: hash(stableId(input.actionId)), accountId: account(input.accountId), sessionId: sessionId(session.id) };
     const v = await this.read(key) ?? (/^[a-f0-9]{64}$/.test(String(input.actionId)) ? await this.read({ ...key, actionId: String(input.actionId) }) : undefined);
-    return v ? response(v, true) : { status: 'not_found', confirmed: false, retryAutomatically: false, canRetry: false };
+    return v ? response(v, true, this.volatile.has(actionHash(v))) : { status: 'not_found', confirmed: false, retryAutomatically: false, canRetry: false };
   }
   async collect(raw: unknown, session: ToolSession) {
     if (session.permission !== 'full') throw new QQError('permission', '收藏空间图片需要完全执行权限。');
@@ -82,7 +83,7 @@ export class Collector {
     if (this.active.size) throw new QQError('busy', '正在收藏另一张空间图片，本次未提交。');
     const run = async () => {
       const previous = await this.read(key);
-      if (previous) { if (previous.fingerprint !== fingerprint) throw new QQError('conflict', '同一收藏动作 ID 的图片或用途不同。'); return response(previous, true); }
+      if (previous) { if (previous.fingerprint !== fingerprint) throw new QQError('conflict', '同一收藏动作 ID 的图片或用途不同。'); return response(previous, true, this.volatile.has(actionHash(previous))); }
       const signal = session.signal ?? new AbortController().signal;
       const check = () => { signal.throwIfAborted(); if (!this.config().enabled || this.config().galleryEnabled === false) throw new QQError('disabled', '空间自主使用或图库使用已关闭，未收藏图片。'); if (!this.provider.active()) throw new QQError('extension', '空间图库收藏接入尚未启用。'); };
       check();
@@ -102,6 +103,7 @@ export class Collector {
       } catch { ledger.status = submitted ? 'uncertain' : 'not_submitted'; }
       this.volatile.set(code, ledger); let persistenceError = false;
       try { await this.save(ledger); } catch { persistenceError = true; }
+      if (!persistenceError) this.volatile.delete(code);
       return response(ledger, false, persistenceError);
     };
     const promise = run().finally(() => this.active.delete(code)); this.active.set(code, { fingerprint, promise }); return promise;
